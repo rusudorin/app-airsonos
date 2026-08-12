@@ -224,12 +224,24 @@ If you don't want some of your Sonos / UPnP players to show up as AirPlay
 devices, you can hide them without editing any files by hand.
 
 Open the app and click "Open Web UI" (or use the "Devices" entry that appears
-in the Home Assistant sidebar). This page lists every device that has been
-detected so far. Uncheck a device to hide it and click "Save". The app
-restarts automatically so the change takes effect.
+in the Home Assistant sidebar). The page queries your Sonos system live and
+shows two lists:
 
-Devices only appear here once they have been discovered, so give the app a
-little time to find your players before hiding them.
+- **Sonos groups** — each group you currently have in the Sonos app, shown as
+  a single row (e.g. `Office + Ray`). AirConnect exposes a group to AirPlay
+  through its *coordinator* speaker, so hiding a group hides that one AirPlay
+  entry. If a group's coordinator is disabled, the whole group disappears from
+  AirPlay — the page warns you when that happens.
+- **Speakers** — every standalone player. Speakers that already appear
+  natively in AirPlay (AirPlay 2 models such as a Ray or Roam) can be hidden
+  here to avoid duplicate entries, while keeping older, non-AirPlay speakers
+  (e.g. a Play:1) and your groups visible.
+
+Uncheck an entry to hide it and click "Save". The app restarts automatically
+so the change takes effect. Devices only appear once they have been
+discovered, so give the app a little time to find your players. If the Sonos
+system can't be reached, the page falls back to a flat list of every known
+device.
 
 ## Known issues and limitations
 
