@@ -475,8 +475,120 @@ def render_index(saved=False):
 
     sections.append('<button type="submit">Save</button>')
     sections.append("</form>")
+    sections.append(
+        '<p class="hint" style="margin-top:24px">'
+        '<a href="?debug=1">Open diagnostics</a> if a group is missing.</p>'
+    )
 
     return PAGE.format(body="".join(sections))
+
+
+def _raw_zone_groups(state_xml):
+    """Parse ZoneGroupState keeping every member and its flags (for debug)."""
+    root = ET.fromstring(state_xml)
+    groups = []
+    for group in root.iter("ZoneGroup"):
+        members = []
+        for member in group.findall("ZoneGroupMember"):
+            members.append(
+                {
+                    "uuid": member.get("UUID", ""),
+                    "name": member.get("ZoneName", ""),
+                    "invisible": member.get("Invisible", "0"),
+                    "bridge": member.get("IsZoneBridge", "0"),
+                }
+            )
+        groups.append({"coordinator": group.get("Coordinator", ""), "members": members})
+    return groups
+
+
+def render_debug():
+    """Render a diagnostics page showing raw discovery + topology + matching."""
+    devices = read_devices()
+    devices_by_key = {_normalise_uuid(dev["udn"]): dev for dev in devices}
+
+    hosts = discover_sonos_hosts()
+
+    parts = ["<h1>AirSonos diagnostics</h1>", '<p><a href=".">&larr; Back</a></p>']
+
+    parts.append("<h2>Sonos hosts found via SSDP</h2>")
+    if hosts:
+        parts.append("<ul>" + "".join("<li>%s</li>" % html.escape(h) for h in hosts) + "</ul>")
+    else:
+        parts.append(
+            '<p class="warn">None. Multicast/SSDP is likely blocked. Set the '
+            "<code>SONOS_HOST</code> option to a Sonos IP to bypass discovery.</p>"
+        )
+
+    state = None
+    used_host = None
+    for host in hosts:
+        try:
+            state = _fetch_zone_group_state(host)
+        except Exception as exc:  # noqa: BLE001 - surfaced for debugging
+            parts.append(
+                '<p class="warn">Query to %s failed: %s</p>'
+                % (html.escape(host), html.escape(str(exc)))
+            )
+            continue
+        if state:
+            used_host = host
+            break
+
+    parts.append("<h2>Zone groups reported by Sonos</h2>")
+    if not state:
+        parts.append('<p class="warn">No topology returned.</p>')
+    else:
+        parts.append("<p>Queried host: %s</p>" % html.escape(str(used_host)))
+        try:
+            raw_groups = _raw_zone_groups(state)
+        except ET.ParseError as exc:
+            raw_groups = []
+            parts.append('<p class="warn">Could not parse topology: %s</p>' % html.escape(str(exc)))
+        for group in raw_groups:
+            coord = _match_device(group["coordinator"], devices_by_key)
+            coord_txt = coord["name"] if coord else "NO MATCH in config"
+            parts.append(
+                "<p><strong>Group</strong> coordinator=%s &rarr; %s</p>"
+                % (html.escape(group["coordinator"]), html.escape(coord_txt))
+            )
+            rows = []
+            for m in group["members"]:
+                dev = _match_device(m["uuid"], devices_by_key)
+                match_txt = dev["name"] if dev else "NO MATCH"
+                flags = []
+                if m["invisible"] == "1":
+                    flags.append("invisible")
+                if m["bridge"] == "1":
+                    flags.append("bridge")
+                rows.append(
+                    "<li>%s (%s) %s &rarr; config: %s</li>"
+                    % (
+                        html.escape(m["name"] or "?"),
+                        html.escape(m["uuid"]),
+                        html.escape("[" + ",".join(flags) + "]") if flags else "",
+                        html.escape(match_txt),
+                    )
+                )
+            parts.append("<ul>" + "".join(rows) + "</ul>")
+
+    parts.append("<h2>Devices in the config file</h2>")
+    if devices:
+        rows = [
+            "<li>%s &mdash; udn=%s &mdash; mac=%s &mdash; %s</li>"
+            % (
+                html.escape(d["name"]),
+                html.escape(d["udn"]),
+                html.escape(d["mac"] or "(none)"),
+                "enabled" if d["enabled"] else "disabled",
+            )
+            for d in devices
+        ]
+        parts.append("<ul>" + "".join(rows) + "</ul>")
+    else:
+        parts.append('<p class="warn">The config file has no &lt;device&gt; entries yet.</p>')
+
+    return PAGE.format(body="".join(parts))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -489,6 +601,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        if urlparse(self.path).query and "debug" in parse_qs(urlparse(self.path).query):
+            self._send_html(render_debug())
+            return
         self._send_html(render_index())
 
     def do_POST(self):
